@@ -2,280 +2,291 @@
 <html lang="ko">
 <head>
   <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>하진이의 응가 피하기 게임 💩</title>
   <style>
-    body { margin:0; background:#fff3d6; text-align:center; font-family:Arial,sans-serif; }
-    h1 { margin:10px; }
-    canvas {
+    :root { color-scheme: light; }
+    body{
+      margin:0;
+      background:#fff3d6;
+      font-family: Arial, sans-serif;
+      text-align:center;
+      -webkit-user-select:none;
+      user-select:none;
+      overflow:hidden;
+    }
+    h1{ margin:10px 0 6px; font-size:20px; }
+    #wrap{
+      display:flex;
+      justify-content:center;
+      align-items:center;
+      padding: 0 10px 14px;
+    }
+    canvas{
       background:#fff;
-      display:block;
-      margin:0 auto;
       border:3px solid #333;
+      border-radius:10px;
       touch-action: manipulation;
+    }
+    .hint{
+      font-size:12px;
+      opacity:.75;
+      margin-bottom:10px;
     }
   </style>
 </head>
 <body>
-<h1>💩 하진이의 응가 피하기 게임 💩</h1>
-<canvas id="game"></canvas>
-<script>
-  const canvas = document.getElementById("game");
-
-  function resizeCanvas() {
-    const vw = Math.min(window.innerWidth * 0.9, 420);
-    const vh = window.innerHeight * 0.75;
-
-    canvas.style.width = vw + "px";
-    canvas.style.height = vh + "px";
-
-    canvas.width = vw;
-    canvas.height = vh;
-  }
-
-  window.addEventListener("resize", resizeCanvas);
-  resizeCanvas();
-</script>
-
+  <h1>💩 하진이의 응가 피하기 게임 💩</h1>
+  <div class="hint">왼쪽 터치=왼쪽, 오른쪽 터치=오른쪽 · 🧻 먹으면 5초 무적!</div>
+  <div id="wrap">
+    <canvas id="game"></canvas>
+  </div>
 
 <script>
+(() => {
+  const NAME = "하진이";
+  const INVINCIBLE_MS = 5000;
+  const POOP_BASE_SPEED = 3.2;
+  const TISSUE_CHANCE = 0.18;   // 응가 1개가 바닥 도착할 때 휴지 생성 확률
+  const SPARKLE_RATE = 3;       // 무적 때 프레임당 반짝 생성량
+  const STEP_TOUCH = 42;        // 터치 이동 거리
+  const STEP_KEY = 24;
+
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d");
 
-  // ====== 설정 ======
-  const NAME = "하진이";
-  const INVINCIBLE_MS = 5000;      // 무적 5초
-  const POOP_BASE_SPEED = 3.2;     // 기본 응가 속도
-  const TISSUE_CHANCE = 0.18;      // 응가가 바닥 닿을 때 휴지 생성 확률
-  const SPARKLE_RATE = 2;          // 프레임당 반짝 생성량(무적일 때)
-  const PLAYER_SPEED_KEY = 22;
-  const PLAYER_SPEED_TOUCH = 34;
+  // ---- 캔버스 크기: 화면에 맞게 자동 조절 ----
+  function resizeCanvas(){
+    const margin = 20;
+    const headerSpace = 130; // 제목+힌트 공간 대략치
+    const vw = Math.min(window.innerWidth - margin, 520);
+    const vh = Math.min(window.innerHeight - headerSpace, 780);
 
-  // ====== 하진이 이미지 ======
+    canvas.width = Math.max(280, Math.floor(vw));
+    canvas.height = Math.max(380, Math.floor(vh));
+  }
+  window.addEventListener("resize", resizeCanvas);
+  resizeCanvas();
+
+  // ---- 하진이 이미지 ----
   const hajinImg = new Image();
-  hajinImg.src = "hajin.png"; // 동그랗게 크롭된 PNG 추천!
+  hajinImg.src = "hajin.png";
+  let imgReady = false;
+  hajinImg.onload = () => { imgReady = true; };
+  hajinImg.onerror = () => { imgReady = false; };
 
-  // ====== 게임 상태 ======
-  let player = { x: 150, y: 360, w: 54, h: 54 };
+  // ---- 게임 상태 ----
   let score = 0;
   let gameOver = false;
+  let invincibleUntil = 0;
 
-  let invincibleUntil = 0; // timestamp(ms)
-  let poopSpeed = POOP_BASE_SPEED;
+  const player = { x: canvas.width/2 - 28, y: canvas.height - 95, w: 56, h: 56 };
 
-  const poops = [
-    { x: rand(20, canvas.width - 40), y: -20, size: 30 }
-  ];
-
-  // 휴지 아이템(한 번에 0~1개만 유지)
+  const poops = [{ x: rand(10, canvas.width - 40), y: -30, size: 30 }];
   let tissue = null; // {x,y,size,speed}
 
-  // 반짝이 파티클
   const sparkles = []; // {x,y,vx,vy,life,maxLife,emoji}
 
-  // ====== 입력(키보드) ======
+  function now(){ return performance.now(); }
+  function isInvincible(){ return now() < invincibleUntil; }
+  function rand(min,max){ return Math.random()*(max-min)+min; }
+  function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
+
+  function clampPlayer(){
+    player.x = clamp(player.x, 0, canvas.width - player.w);
+    player.y = canvas.height - 95;
+  }
+
+  // resize 후 플레이어 위치 보정
+  window.addEventListener("resize", () => {
+    resizeCanvas();
+    clampPlayer();
+  });
+
+  // ---- 입력 ----
   document.addEventListener("keydown", (e) => {
-    if (e.key === "ArrowLeft") player.x -= PLAYER_SPEED_KEY;
-    if (e.key === "ArrowRight") player.x += PLAYER_SPEED_KEY;
+    if (e.key === "ArrowLeft") player.x -= STEP_KEY;
+    if (e.key === "ArrowRight") player.x += STEP_KEY;
     clampPlayer();
   });
 
-  // ====== 입력(터치) ======
+  // 터치: 화면 왼쪽/오른쪽으로 이동 (스크롤 방지)
+  function handleTouch(clientX){
+    const mid = window.innerWidth / 2;
+    if (clientX < mid) player.x -= STEP_TOUCH;
+    else player.x += STEP_TOUCH;
+    clampPlayer();
+  }
+
   canvas.addEventListener("touchstart", (e) => {
-    const touchX = e.touches[0].clientX;
-    if (touchX < window.innerWidth / 2) player.x -= PLAYER_SPEED_TOUCH;
-    else player.x += PLAYER_SPEED_TOUCH;
-    clampPlayer();
+    e.preventDefault();
+    const t = e.touches[0];
+    handleTouch(t.clientX);
+  }, { passive:false });
+
+  canvas.addEventListener("mousedown", (e) => {
+    handleTouch(e.clientX);
   });
 
-  function clampPlayer() {
-    player.x = Math.max(0, Math.min(canvas.width - player.w, player.x));
+  // ---- 스폰/충돌 ----
+  function spawnPoop(){
+    poops.push({ x: rand(10, canvas.width - 40), y: -40, size: rand(26,34) });
   }
 
-  function rand(min, max) { return Math.random() * (max - min) + min; }
-  function now() { return performance.now(); }
-  function isInvincible() { return now() < invincibleUntil; }
-
-  function spawnPoop() {
-    poops.push({
-      x: rand(10, canvas.width - 40),
-      y: -30,
-      size: rand(26, 34)
-    });
-  }
-
-  function maybeSpawnTissue() {
+  function maybeSpawnTissue(){
     if (tissue) return;
-    if (Math.random() < TISSUE_CHANCE) {
-      tissue = {
-        x: rand(10, canvas.width - 40),
-        y: -30,
-        size: 30,
-        speed: rand(2.2, 3.2)
-      };
+    if (Math.random() < TISSUE_CHANCE){
+      tissue = { x: rand(10, canvas.width - 40), y: -40, size: 30, speed: rand(2.3,3.4) };
     }
   }
 
-  function addSparkleBurst(cx, cy, count=14) {
-    const emojis = ["✨","💫","⭐️","🌟"];
-    for (let i=0; i<count; i++) {
-      const ang = rand(0, Math.PI*2);
-      const spd = rand(0.6, 2.4);
-      sparkles.push({
-        x: cx + rand(-10, 10),
-        y: cy + rand(-10, 10),
-        vx: Math.cos(ang) * spd,
-        vy: Math.sin(ang) * spd - rand(0.2, 1.0),
-        life: rand(18, 34),
-        maxLife: 34,
-        emoji: emojis[Math.floor(Math.random()*emojis.length)]
-      });
-    }
-  }
-
-  function addInvincibleTrail() {
-    // 무적일 때 지속적으로 파티클 생성
-    const cx = player.x + player.w/2;
-    const cy = player.y + player.h/2;
-    const emojis = ["✨","💫","⭐️","🌟"];
-    for (let i=0; i<SPARKLE_RATE; i++) {
-      sparkles.push({
-        x: cx + rand(-22, 22),
-        y: cy + rand(-22, 22),
-        vx: rand(-0.8, 0.8),
-        vy: rand(-1.6, -0.2),
-        life: rand(14, 24),
-        maxLife: 24,
-        emoji: emojis[Math.floor(Math.random()*emojis.length)]
-      });
-    }
-  }
-
-  function rectHit(ax, ay, aw, ah, bx, by, bw, bh) {
+  function rectHit(ax, ay, aw, ah, bx, by, bw, bh){
     return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
   }
 
-  function update() {
+  function addSparkleBurst(cx, cy, count=18){
+    const emojis = ["✨","💫","⭐️","🌟"];
+    for (let i=0;i<count;i++){
+      const ang = rand(0, Math.PI*2);
+      const spd = rand(0.8, 2.8);
+      sparkles.push({
+        x: cx + rand(-10,10),
+        y: cy + rand(-10,10),
+        vx: Math.cos(ang)*spd,
+        vy: Math.sin(ang)*spd - rand(0.2, 1.2),
+        life: rand(18, 34),
+        maxLife: 34,
+        emoji: emojis[(Math.random()*emojis.length)|0]
+      });
+    }
+  }
+
+  function addInvincibleTrail(){
+    const cx = player.x + player.w/2;
+    const cy = player.y + player.h/2;
+    const emojis = ["✨","💫","⭐️","🌟"];
+    for (let i=0;i<SPARKLE_RATE;i++){
+      sparkles.push({
+        x: cx + rand(-26,26),
+        y: cy + rand(-26,26),
+        vx: rand(-1.0, 1.0),
+        vy: rand(-2.0, -0.2),
+        life: rand(14, 24),
+        maxLife: 24,
+        emoji: emojis[(Math.random()*emojis.length)|0]
+      });
+    }
+  }
+
+  // ---- 루프 ----
+  function update(){
     if (gameOver) return;
 
-    // 난이도(점수 올라가면 살짝 빨라짐)
-    poopSpeed = POOP_BASE_SPEED + Math.min(2.0, score * 0.02);
+    // 난이도: 점수에 따라 속도/응가 수 증가
+    const poopSpeed = POOP_BASE_SPEED + Math.min(2.2, score * 0.02);
 
-    // 무적일 때 반짝 트레일
     if (isInvincible()) addInvincibleTrail();
 
-    // 응가 이동/충돌
-    for (let i = poops.length - 1; i >= 0; i--) {
+    // 응가 처리
+    for (let i=poops.length-1; i>=0; i--){
       const p = poops[i];
       p.y += poopSpeed;
 
-      // 충돌: 플레이어 vs 응가
-      const hit = rectHit(
-        player.x, player.y, player.w, player.h,
-        p.x, p.y, p.size, p.size
-      );
-
-      if (hit && !isInvincible()) {
+      const hit = rectHit(player.x, player.y, player.w, player.h, p.x, p.y, p.size, p.size);
+      if (hit && !isInvincible()){
         gameOver = true;
         alert(`💥 ${NAME} 응가 맞았다!\n점수: ${score}`);
         location.reload();
         return;
       }
 
-      // 바닥 도착
-      if (p.y > canvas.height + 40) {
-        poops.splice(i, 1);
+      if (p.y > canvas.height + 60){
+        poops.splice(i,1);
         score++;
-        // 가끔 휴지 떨어뜨리기
         maybeSpawnTissue();
-        // 점수 올라가면 응가 추가로 조금씩 늘리기
         if (score % 6 === 0 && poops.length < 4) spawnPoop();
       }
     }
-
-    // 최소 1개 응가 유지
     if (poops.length === 0) spawnPoop();
 
-    // 휴지 이동/충돌
-    if (tissue) {
+    // 휴지 처리
+    if (tissue){
       tissue.y += tissue.speed;
-
-      const got = rectHit(
-        player.x, player.y, player.w, player.h,
-        tissue.x, tissue.y, tissue.size, tissue.size
-      );
-
-      if (got) {
+      const got = rectHit(player.x, player.y, player.w, player.h, tissue.x, tissue.y, tissue.size, tissue.size);
+      if (got){
         invincibleUntil = now() + INVINCIBLE_MS;
-        // 화려한 획득 이펙트
-        addSparkleBurst(player.x + player.w/2, player.y + player.h/2, 22);
+        addSparkleBurst(player.x + player.w/2, player.y + player.h/2, 26);
         tissue = null;
-      } else if (tissue.y > canvas.height + 40) {
+      } else if (tissue.y > canvas.height + 60){
         tissue = null;
       }
     }
 
-    // 반짝 파티클 업데이트
-    for (let i = sparkles.length - 1; i >= 0; i--) {
+    // 파티클 처리
+    for (let i=sparkles.length-1; i>=0; i--){
       const s = sparkles[i];
       s.x += s.vx;
       s.y += s.vy;
-      s.vy += 0.05; // 아주 약한 중력
+      s.vy += 0.06;
       s.life -= 1;
-      if (s.life <= 0) sparkles.splice(i, 1);
+      if (s.life <= 0) sparkles.splice(i,1);
     }
 
     draw();
     requestAnimationFrame(update);
   }
 
-  function drawPlayer() {
-    const cx = player.x + player.w / 2;
-    const cy = player.y + player.h / 2;
+  function drawPlayer(){
+    const cx = player.x + player.w/2;
+    const cy = player.y + player.h/2;
 
-    if (isInvincible()) {
-      // 무적일 때: 깜빡 외곽 링 + 글로우 느낌(선 굵기 변화)
+    if (isInvincible()){
       const t = now() / 120;
-      const pulse = 2 + Math.abs(Math.sin(t)) * 4;
+      const pulse = 2 + Math.abs(Math.sin(t)) * 5;
 
       ctx.save();
-      ctx.globalAlpha = 0.9;
+      ctx.globalAlpha = 0.95;
       ctx.lineWidth = pulse;
-      ctx.strokeStyle = "#ffcc00"; // 노란 링(캔버스 기본색만 사용)
+      ctx.strokeStyle = "#ffcc00";
       ctx.beginPath();
-      ctx.arc(cx, cy, (player.w/2) + 10 + Math.sin(t)*3, 0, Math.PI*2);
+      ctx.arc(cx, cy, (player.w/2) + 12 + Math.sin(t)*3, 0, Math.PI*2);
       ctx.stroke();
       ctx.restore();
     }
 
-    // 하진이 사진
-    ctx.drawImage(hajinImg, player.x, player.y, player.w, player.h);
+    if (imgReady){
+      ctx.drawImage(hajinImg, player.x, player.y, player.w, player.h);
+    } else {
+      // 이미지가 안 불러와져도 플레이 가능하도록 대체 캐릭터
+      ctx.font = "44px Arial";
+      ctx.fillText("😀", player.x + 6, player.y + 46);
+    }
 
-    if (isInvincible()) {
-      // 무적 텍스트
-      const left = Math.ceil((invincibleUntil - now()) / 1000);
+    if (isInvincible()){
+      const left = Math.max(0, Math.ceil((invincibleUntil - now()) / 1000));
       ctx.save();
       ctx.font = "bold 16px Arial";
-      ctx.fillText(`무적!! (${left}s)`, player.x - 6, player.y - 10);
+      ctx.fillText(`무적!! (${left}s)`, clamp(player.x - 6, 6, canvas.width - 120), player.y - 10);
       ctx.restore();
     }
   }
 
-  function draw() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+  function draw(){
+    ctx.clearRect(0,0,canvas.width,canvas.height);
 
-    // 상단 UI
+    // UI
     ctx.font = "16px Arial";
     ctx.fillText(`${NAME} ❤️`, 10, 22);
     ctx.fillText(`점수: ${score}`, canvas.width - 90, 22);
 
-    // 응가들
+    // 응가
     ctx.font = "30px Arial";
-    for (const p of poops) {
+    for (const p of poops){
       ctx.fillText("💩", p.x, p.y);
     }
 
     // 휴지
-    if (tissue) {
+    if (tissue){
       ctx.font = "30px Arial";
       ctx.fillText("🧻", tissue.x, tissue.y);
     }
@@ -284,19 +295,19 @@
     drawPlayer();
 
     // 반짝 파티클
-    for (const s of sparkles) {
-      const alpha = Math.max(0, s.life / s.maxLife);
+    for (const s of sparkles){
+      const a = Math.max(0, s.life / s.maxLife);
       ctx.save();
-      ctx.globalAlpha = alpha;
+      ctx.globalAlpha = a;
       ctx.font = "18px Arial";
       ctx.fillText(s.emoji, s.x, s.y);
       ctx.restore();
     }
   }
 
-  hajinImg.onload = () => update();
+  // 시작
+  update();
+})();
 </script>
 </body>
 </html>
-
-
