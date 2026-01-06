@@ -17,7 +17,26 @@
 </head>
 <body>
 <h1>💩 하진이의 응가 피하기 게임 💩</h1>
-<canvas id="game" width="340" height="460"></canvas>
+<canvas id="game"></canvas>
+
+<script>
+  const canvas = document.getElementById("game");
+
+  function resizeCanvas() {
+    const vw = Math.min(window.innerWidth * 0.9, 420);
+    const vh = window.innerHeight * 0.75;
+
+    canvas.style.width = vw + "px";
+    canvas.style.height = vh + "px";
+
+    canvas.width = vw;
+    canvas.height = vh;
+  }
+
+  window.addEventListener("resize", resizeCanvas);
+  resizeCanvas();
+</script>
+
 
 <script>
   const canvas = document.getElementById("game");
@@ -280,3 +299,4 @@
 </script>
 </body>
 </html>
+
